@@ -12,7 +12,7 @@ const CACHE = MOIU.UniversalFallback(MOIU.Model{Float64}())
 import SCS
 
 for T in solvers
-    optimizer = SCS.Optimizer(linear_solver=T, eps=1e-6)
+    optimizer = SCS.Optimizer(linear_solver=T, eps=1e-7)
     MOI.set(optimizer, MOI.Silent(), true)
 
     @testset "SolverName" begin
@@ -24,7 +24,7 @@ for T in solvers
     bridged = MOIB.full_bridge_optimizer(cached, Float64)
     config = MOIT.TestConfig(atol=1e-5)
 
-    @testset "Unit" begin
+    @testset "Unit with $T" begin
         MOIT.unittest(bridged, config, [
             # FIXME `NumberOfThreads` not supported.
             "number_threads",

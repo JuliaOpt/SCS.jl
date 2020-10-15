@@ -7,6 +7,7 @@ export SCS_init, SCS_solve, SCS_finish, SCS_version
 # where K is a product cone of
 # zero cone { x | x = 0 },
 # positive orthant { x | x >= 0 },
+# box cone { (t, x) | t * l <= x <= t * u, t >= 0 },
 # second-order cones (SOC) { (t,x) | ||x||_2 <= t },
 # semi-definite cones (SDC) { X | X psd }, and
 # exponential cones {(x,y,z) | y e^(x/y) <= z, y>0 },
@@ -16,6 +17,7 @@ export SCS_init, SCS_solve, SCS_finish, SCS_version
 #
 # Description of input argments:
 # A is the matrix with m rows and n cols
+# TODO: document P
 # b is a vector of length m
 # c is a vector of length n
 #
@@ -31,8 +33,10 @@ export SCS_init, SCS_solve, SCS_finish, SCS_version
 #
 # Returns a Solution object.
 function SCS_solve(linear_solver::Type{<:LinearSolver},
-        m::Integer, n::Integer, A::ManagedSCSMatrix{T}, b::Vector{Float64}, c::Vector{Float64},
-        f::Integer, l::Integer, q::Vector{<:Integer}, s::Vector{<:Integer},
+        m::Integer, n::Integer, A::ManagedSCSMatrix{T}, P::ManagedSCSMatrix{T},
+        b::Vector{Float64}, c::Vector{Float64},
+        f::Integer, l::Integer, bu::Vector{Float64}, bl::Vector{Float64},
+        q::Vector{<:Integer}, s::Vector{<:Integer},
         ep::Integer, ed::Integer, p::Vector{Float64},
         primal_sol::Vector{Float64}=zeros(n),
         dual_sol::Vector{Float64}=zeros(m),
@@ -66,14 +70,14 @@ function SCS_solve(linear_solver::Type{<:LinearSolver},
 
     settings = Base.cconvert(Ref{SCSSettings{T}}, SCSSettings(linear_solver; options...))
 
-    data = SCSData(m, n, A, b, c, settings)
+    data = SCSData(m, n, A, P, b, c, settings)
     # data holds pointers to objects which need to be protected from GC:
     # A, b, c and settings
 
-    cone = SCSCone{T}(f, l, q_T, s_T, ep, ed, p)
+    cone = SCSCone{T}(f, l, bu, bl, q_T, s_T, ep, ed, p)
     info_ref = Base.cconvert(Ref{SCSInfo{T}}, SCSInfo{T}())
 
-    Base.GC.@preserve A settings b c begin
+    Base.GC.@preserve A P settings b c options begin
         p_work = SCS_init(linear_solver, data, cone, info_ref)
         status = SCS_solve(linear_solver, p_work, data, cone, solution, info_ref)
         SCS_finish(linear_solver, p_work)
@@ -82,16 +86,20 @@ function SCS_solve(linear_solver::Type{<:LinearSolver},
     return Solution(primal_sol, dual_sol, slack, info_ref[], status)
 end
 function SCS_solve(linear_solver::Type{<:LinearSolver},
-        m::Integer, n::Integer, A::VecOrMatOrSparse, b::Vector{Float64}, c::Vector{Float64},
-        f::Integer, l::Integer, q::Vector{<:Integer}, s::Vector{<:Integer},
+        m::Integer, n::Integer, A::VecOrMatOrSparse, P::VecOrMatOrSparse,
+        b::Vector{Float64}, c::Vector{Float64},
+        f::Integer, l::Integer, bu::Vector{Float64}, bl::Vector{Float64},
+        q::Vector{<:Integer}, s::Vector{<:Integer},
         ep::Integer, ed::Integer, p::Vector{Float64},
         primal_sol::Vector{Float64}=zeros(n),
         dual_sol::Vector{Float64}=zeros(m),
         slack::Vector{Float64}=zeros(m);
         options...)
     T = scsint_t(linear_solver)
-    return SCS_solve(linear_solver, m, n, ManagedSCSMatrix{T}(m, n, A), b, c,
-                     f, l, q, s, ep, ed, p, primal_sol, dual_sol, slack; options...)
+    return SCS_solve(linear_solver, m, n, ManagedSCSMatrix{T}(m, n, A),
+                     ManagedSCSMatrix{T}(n, n, P), b, c,
+                     f, l, bu, bl, q, s, ep, ed, p, primal_sol, dual_sol,
+                     slack; options...)
 end
 
 

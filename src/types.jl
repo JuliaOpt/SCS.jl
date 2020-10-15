@@ -79,11 +79,19 @@ struct SCSSettings{T<:SCSInt}
     verbose::T # boolean, write out progress
     warm_start::T # boolean, warm start (put initial guess in Sol struct)
     acceleration_lookback::T # acceleration memory parameter
+    adaptive_scaling::T # whether to adaptively update the scale param
     write_data_filename::Cstring
+    log_csv_filename::Cstring
 
     SCSSettings{T}() where T = new{T}()
-    SCSSettings{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate, verbose, warm_start, acceleration_lookback, write_data_filename) where T =
-        new{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate, verbose, warm_start, acceleration_lookback, write_data_filename)
+    function SCSSettings{T}(normalize, scale, rho_x, max_iters, eps, alpha,
+                            cg_rate, verbose, warm_start,
+                            acceleration_lookback, adaptive_scaling,
+                            write_data_filename, log_csv_filename) where T
+        return new{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate,
+                      verbose, warm_start, acceleration_lookback, adaptive_scaling,
+                      write_data_filename, log_csv_filename)
+    end
 end
 
 function _SCS_user_settings(default_settings::SCSSettings{T};
@@ -97,25 +105,29 @@ function _SCS_user_settings(default_settings::SCSSettings{T};
         verbose=default_settings.verbose,
         warm_start=default_settings.warm_start,
         acceleration_lookback=default_settings.acceleration_lookback,
-        write_data_filename=default_settings.write_data_filename
+        adaptive_scaling=default_settings.adaptive_scaling,
+        write_data_filename=C_NULL,
+        log_csv_filename=C_NULL
         ) where T
-    return SCSSettings{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate, verbose,warm_start, acceleration_lookback, write_data_filename)
+    write_data_filename_p = write_data_filename isa String ? pointer(write_data_filename) : C_NULL
+    log_csv_filename_p = log_csv_filename isa String ? pointer(log_csv_filename) : C_NULL
+    return SCSSettings{T}(normalize, scale, rho_x, max_iters, eps, alpha,
+                         cg_rate, verbose,warm_start, acceleration_lookback,
+                         adaptive_scaling, write_data_filename_p,
+                         log_csv_filename_p)
 end
 
+# Warning: Strings provided through options must outlive the solve.
+# SCSSettings keeps only a pointer to the strings.
 function SCSSettings(linear_solver::Type{<:LinearSolver}; options...)
 
     T = scsint_t(linear_solver)
 
-    managed_matrix = ManagedSCSMatrix{T}(0,0,spzeros(0,0))
     default_settings = Base.cconvert(Ref{SCSSettings{T}}, SCSSettings{T}())
-    a = [0.0]
-    dummy_data = SCSData(0,0,
-        managed_matrix,
-        a,
-        a,
-        default_settings)
+    dummy_data = SCSData{T}(0,0,C_NULL, C_NULL, C_NULL, C_NULL,
+        Base.unsafe_convert(Ref{SCSSettings{T}}, default_settings))
 
-    Base.GC.@preserve managed_matrix default_settings a begin
+    Base.GC.@preserve default_settings begin
         SCS_set_default_settings(linear_solver, dummy_data)
     end
 
@@ -127,6 +139,7 @@ struct SCSData{T<:SCSInt}
     m::T
     n::T
     A::Ptr{SCSMatrix{T}}
+    P::Ptr{SCSMatrix{T}}
     # b is of size m, c is of size n
     b::Ptr{Cdouble}
     c::Ptr{Cdouble}
@@ -134,12 +147,14 @@ struct SCSData{T<:SCSInt}
 end
 
 function SCSData(m::Integer, n::Integer,
-    mat::ManagedSCSMatrix{T},
+    A::ManagedSCSMatrix{T},
+    P::ManagedSCSMatrix{T},
     b::Vector{Float64},
     c::Vector{Float64},
     stgs::Ref{SCSSettings{T}}) where T
     return SCSData{T}(m, n,
-        Base.unsafe_convert(Ref{SCSMatrix{T}}, mat.scsmatref), # Ptr{SCSMatrix{T}}
+        Base.unsafe_convert(Ref{SCSMatrix{T}}, A.scsmatref), # Ptr{SCSMatrix{T}}
+        Base.unsafe_convert(Ref{SCSMatrix{T}}, P.scsmatref), # Ptr{SCSMatrix{T}}
         pointer(b),
         pointer(c),
         Base.unsafe_convert(Ref{SCSSettings{T}}, stgs) # Ptr{SCSSettings{T}}
@@ -154,7 +169,7 @@ end
 
 struct SCSInfo{T<:SCSInt}
     iter::T
-    status::NTuple{32, Cchar} # char status[32]
+    status::NTuple{64, Cchar} # char status[64]
     statusVal::T
     pobj::Cdouble
     dobj::Cdouble
@@ -162,12 +177,13 @@ struct SCSInfo{T<:SCSInt}
     resDual::Cdouble
     resInfeas::Cdouble
     resUnbdd::Cdouble
+    xt_p_x::Cdouble
     relGap::Cdouble
     setupTime::Cdouble
     solveTime::Cdouble
 end
 
-SCSInfo{T}() where T = SCSInfo{T}(0, ntuple(_ -> zero(Cchar), 32), 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+SCSInfo{T}() where T = SCSInfo{T}(0, ntuple(_ -> zero(Cchar), 64), 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 function raw_status(info::SCSInfo)
     s = collect(info.status)
@@ -183,6 +199,7 @@ end
 # where K is a product cone of
 # zero cones,
 # linear cones { x | x >= 0 },
+# box cones { (t, x) | t * l <= x <= t * u, t >= 0 },
 # second-order cones { (t,x) | ||x||_2 <= t },
 # semi-definite cones { X | X psd }, and
 # exponential cones {(x,y,z) | y e^(x/y) <= z, y>0 }.
@@ -192,6 +209,9 @@ end
 struct SCSCone{T<:SCSInt}
     f::T # number of linear equality constraints
     l::T # length of LP cone
+    bu::Ptr{Cdouble} # upper box values
+    bl::Ptr{Cdouble} # lower box values
+    bsize::T # length of box constraint, including scale t
     q::Ptr{T} # array of second-order cone constraints
     qsize::T # length of SOC array
     s::Ptr{T} # array of SD constraints
@@ -204,9 +224,14 @@ end
 
 # Returns an SCSCone. The q, s, and p arrays are *not* GC tracked in the
 # struct. Use this only when you know that q, s, and p will outlive the struct.
-function SCSCone{T}(f::Integer, l::Integer, q::Vector{T}, s::Vector{T},
-                 ep::Integer, ed::Integer, p::Vector{Cdouble}) where T
-    return SCSCone{T}(f, l, pointer(q), length(q), pointer(s), length(s), ep, ed, pointer(p), length(p))
+function SCSCone{T}(f::Integer, l::Integer, bu::Vector{Cdouble},
+                    bl::Vector{Cdouble}, q::Vector{T}, s::Vector{T},
+                    ep::Integer, ed::Integer, p::Vector{Cdouble}) where T
+    @assert length(bl) == length(bu)
+    return SCSCone{T}(f, l, pointer(bu), pointer(bl),
+                      isempty(bu) ? 0 : length(bu) + 1,
+                      pointer(q), length(q), pointer(s), length(s), ep, ed,
+                      pointer(p), length(p))
 end
 
 
