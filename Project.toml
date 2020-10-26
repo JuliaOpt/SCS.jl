@@ -1,7 +1,7 @@
 name = "SCS"
 uuid = "c946c3f1-0d1f-5ce8-9dea-7daa1f7e2d13"
 repo = "https://github.com/jump-dev/SCS.jl.git"
-version = "0.7.0"
+version = "0.7.1"
 
 [deps]
 BinaryProvider = "b99e7846-7c00-51b0-8f62-c81ae34c0232"
