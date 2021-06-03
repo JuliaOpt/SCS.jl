@@ -35,4 +35,9 @@ include("c_wrapper.jl")
 include("MPB_wrapper.jl")
 include("MOI_wrapper.jl")
 
+if Base.VERSION >= v"1.4.2"
+    include("precompile.jl")
+    _precompile_()
+end
+
 end # module
