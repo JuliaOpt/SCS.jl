@@ -33,8 +33,13 @@ struct ManagedSCSMatrix{T<:SCSInt}
     colptr::Vector{T}
     scsmatref::Base.RefValue{SCSMatrix{T}}
 
-    function ManagedSCSMatrix{T}(m::Integer, n::Integer, values::Vector{Cdouble},
-                                 rowval::Vector{T}, colptr::Vector{T}) where T
+    function ManagedSCSMatrix{T}(
+        m::Integer,
+        n::Integer,
+        values::Vector{Cdouble},
+        rowval::Vector{T},
+        colptr::Vector{T},
+    ) where {T}
         # scsmatref holds the reference to SCSMatrix created out of data in ManagedSCSMatrix.
         # this way the reference to SCSMatrix always points to valid data
         # as long as the ManagedSCSMatrix is not GC collected.
@@ -44,12 +49,12 @@ struct ManagedSCSMatrix{T<:SCSInt}
         #   `Ref{SCSMatrix}`
         # in the type tuple when ccalling with `scsmatref`
 
-        scsmat = SCSMatrix{T}(
-            pointer(values), pointer(rowval), pointer(colptr), m, n)
+        scsmat = SCSMatrix{T}(pointer(values), pointer(rowval), pointer(colptr), m, n)
 
         return new{T}(values, rowval, colptr, Base.cconvert(Ref{SCSMatrix{T}}, scsmat))
     end
 end
+csize(m::ManagedSCSMatrix) = (M = m.scsmatref[]; (M.m, M.n))
 
 function ManagedSCSMatrix{T}(m::Integer, n::Integer, A::SparseMatrixCSC) where T
     # we convert everything to make sure that no conversion will
@@ -64,85 +69,161 @@ function ManagedSCSMatrix{T}(m::Integer, n::Integer, A::SparseMatrixCSC) where T
     return ManagedSCSMatrix{T}(m, n, values, rowval, colptr)
 end
 
-function ManagedSCSMatrix{T}(m::Integer, n::Integer, A::AbstractMatrix) where T
+function ManagedSCSMatrix{T}(m::Integer, n::Integer, A::AbstractMatrix) where {T}
     return ManagedSCSMatrix{T}(m, n, sparse(A))
 end
 
+"""
+    SCSSettings
+SCS struct with parameters controlling scs.
+
+NOTE: The `write_data_filename` and `log_csv_filename` are stored as **pointers** in the struct,
+so be careful to ensure that a Julia references to these arrays exists as long as `SCSSettings` will be used.
+"""
 struct SCSSettings{T<:SCSInt}
     normalize::T # boolean, heuristic data rescaling
-    scale::Cdouble # if normalized, rescales by this factor
+    scale::Cdouble # if normalized, set factor for rescales
     rho_x::Cdouble # x equality constraint scaling
     max_iters::T # maximum iterations to take
-    eps::Cdouble # convergence tolerance
+    eps_abs::Cdouble # absolute convergence tolerance
+    eps_rel::Cdouble # relative convergence tolerance
+    eps_infeas::Cdouble # infeasible convergence tolerance
     alpha::Cdouble # relaxation parameter
-    cg_rate::Cdouble # for indirect, tolerance goes down like (1/iter)^cg_rate
+    time_limit_secs::Cdouble # time limit in secs
     verbose::T # boolean, write out progress
-    warm_start::T # boolean, warm start (put initial guess in Sol struct)
+    warm_start::T # boolean, warm start (put initial guess in SCSSolution struct)
     acceleration_lookback::T # acceleration memory parameter
-    write_data_filename::Cstring
+    acceleration_interval::T # interval to apply acceleration
+    adaptive_scaling::T # whether to adaptively update the scale param
+    write_data_filename::Cstring # if set scs will dump raw prob data
+    log_csv_filename::Cstring # if set scs will log solve
 
-    SCSSettings{T}() where T = new{T}()
-    SCSSettings{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate, verbose, warm_start, acceleration_lookback, write_data_filename) where T =
-        new{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate, verbose, warm_start, acceleration_lookback, write_data_filename)
+    SCSSettings{T}() where {T} = new{T}()
+    SCSSettings{T}(
+        normalize,
+        scale,
+        rho_x,
+        max_iters,
+        eps_abs,
+        eps_rel,
+        eps_infeas,
+        alpha,
+        time_limit_secs,
+        verbose,
+        warm_start,
+        acceleration_lookback,
+        acceleration_interval,
+        adaptive_scaling,
+        write_data_filename::Union{String, Cstring},
+        log_csv_filename::Union{String, Cstring},
+    ) where {T} = new{T}(
+        normalize,
+        scale,
+        rho_x,
+        max_iters,
+        eps_abs,
+        eps_rel,
+        eps_infeas,
+        alpha,
+        time_limit_secs,
+        verbose,
+        warm_start,
+        acceleration_lookback,
+        acceleration_interval,
+        adaptive_scaling,
+        Base.unsafe_convert(Cstring, write_data_filename),
+        Base.unsafe_convert(Cstring, log_csv_filename),
+    )
 end
 
-function _SCS_user_settings(default_settings::SCSSettings{T};
-        normalize=default_settings.normalize,
-        scale=default_settings.scale,
-        rho_x=default_settings.rho_x,
-        max_iters=default_settings.max_iters,
-        eps=default_settings.eps,
-        alpha=default_settings.alpha,
-        cg_rate=default_settings.cg_rate,
-        verbose=default_settings.verbose,
-        warm_start=default_settings.warm_start,
-        acceleration_lookback=default_settings.acceleration_lookback,
-        write_data_filename=default_settings.write_data_filename
-        ) where T
-    return SCSSettings{T}(normalize, scale, rho_x, max_iters, eps, alpha, cg_rate, verbose,warm_start, acceleration_lookback, write_data_filename)
+function _SCS_user_settings(
+    default_settings::SCSSettings{T};
+    normalize = default_settings.normalize,
+    scale = default_settings.scale,
+    rho_x = default_settings.rho_x,
+    max_iters = default_settings.max_iters,
+    eps_abs = default_settings.eps_abs,
+    eps_rel = default_settings.eps_rel,
+    eps_infeas = default_settings.eps_infeas,
+    alpha = default_settings.alpha,
+    time_limit_secs = default_settings.time_limit_secs,
+    verbose = default_settings.verbose,
+    warm_start = default_settings.warm_start,
+    acceleration_lookback = default_settings.acceleration_lookback,
+    acceleration_interval = default_settings.acceleration_interval,
+    adaptive_scaling = default_settings.adaptive_scaling,
+    write_data_filename = default_settings.write_data_filename,
+    log_csv_filename = default_settings.log_csv_filename,
+) where {T}
+    return SCSSettings{T}(
+        normalize,
+        scale,
+        rho_x,
+        max_iters,
+        eps_abs,
+        eps_rel,
+        eps_infeas,
+        alpha,
+        time_limit_secs,
+        verbose,
+        warm_start,
+        acceleration_lookback,
+        acceleration_interval,
+        adaptive_scaling,
+        write_data_filename,
+        log_csv_filename,
+    )
 end
 
 function SCSSettings(linear_solver::Type{<:LinearSolver}; options...)
-
     T = scsint_t(linear_solver)
-
-    managed_matrix = ManagedSCSMatrix{T}(0,0,spzeros(0,0))
     default_settings = Base.cconvert(Ref{SCSSettings{T}}, SCSSettings{T}())
-    a = [0.0]
-    dummy_data = SCSData(0,0,
-        managed_matrix,
-        a,
-        a,
-        default_settings)
+    scsm_ptr = convert(Ptr{SCSMatrix{T}}, C_NULL)
+    ptr_d = convert(Ptr{Cdouble}, C_NULL)
+    data = SCSData{T}(0, 0, scsm_ptr, scsm_ptr, ptr_d, ptr_d,
+        Base.unsafe_convert(Ref{SCSSettings{T}}, default_settings))
 
-    Base.GC.@preserve managed_matrix default_settings a begin
-        SCS_set_default_settings(linear_solver, dummy_data)
-    end
+    SCS_set_default_settings(linear_solver, data)
 
     return _SCS_user_settings(default_settings[]; options...)
 end
 
 struct SCSData{T<:SCSInt}
-    # A has m rows, n cols
     m::T
     n::T
-    A::Ptr{SCSMatrix{T}}
-    # b is of size m, c is of size n
-    b::Ptr{Cdouble}
-    c::Ptr{Cdouble}
+    A::Ptr{SCSMatrix{T}} # size: (m, n)
+    P::Ptr{SCSMatrix{T}} # size: (n, n)
+    b::Ptr{Cdouble} # size: (m,1)
+    c::Ptr{Cdouble} # size: (n,1)
     stgs::Ptr{SCSSettings{T}}
 end
 
-function SCSData(m::Integer, n::Integer,
-    mat::ManagedSCSMatrix{T},
+"""
+    SCSData
+SCS struct with problem definition.
+
+NOTE: The `A`, `P`, `b`, `c` and `stgs` are stored as **pointers** in the struct, so be careful to ensure
+that a Julia references to these arrays exists as long as `SCSData` will be used.
+"""
+function SCSData(
+    m::Integer,
+    n::Integer,
+    A::ManagedSCSMatrix{T},
+    P::ManagedSCSMatrix{T},
     b::Vector{Float64},
     c::Vector{Float64},
-    stgs::Ref{SCSSettings{T}}) where T
-    return SCSData{T}(m, n,
-        Base.unsafe_convert(Ref{SCSMatrix{T}}, mat.scsmatref), # Ptr{SCSMatrix{T}}
+    stgs::Ref{SCSSettings{T}},
+) where {T}
+    @assert csize(A) == (size(b, 1), size(c, 1)) == (m, n)
+    @assert csize(P) == (n, n)
+    return SCSData{T}(
+        m,
+        n,
+        Base.unsafe_convert(Ref{SCSMatrix{T}}, A.scsmatref), # Ptr{SCSMatrix{T}}
+        Base.unsafe_convert(Ref{SCSMatrix{T}}, P.scsmatref), # Ptr{SCSMatrix{T}}
         pointer(b),
         pointer(c),
-        Base.unsafe_convert(Ref{SCSSettings{T}}, stgs) # Ptr{SCSSettings{T}}
+        Base.unsafe_convert(Ref{SCSSettings{T}}, stgs), # Ptr{SCSSettings{T}}
     )
 end
 
@@ -153,21 +234,40 @@ struct SCSSolution
 end
 
 struct SCSInfo{T<:SCSInt}
-    iter::T
-    status::NTuple{32, Cchar} # char status[32]
-    statusVal::T
-    pobj::Cdouble
-    dobj::Cdouble
-    resPri::Cdouble
-    resDual::Cdouble
-    resInfeas::Cdouble
-    resUnbdd::Cdouble
-    relGap::Cdouble
-    setupTime::Cdouble
-    solveTime::Cdouble
+    iter::T # number of iterations taken
+    status::NTuple{64,Cchar} # status string, e.g. 'solved'
+    statusVal::T # status as scs_int, defined in scs/inlcude/glbopts.h
+    scale_updates::T # number of updates to scale
+    pobj::Cdouble # primal objective
+    dobj::Cdouble # dual objective
+    resPri::Cdouble # primal equality residual
+    resDual::Cdouble # dual equality residual
+    resInfeas::Cdouble # infeasibility cert residual
+    resUnbdd_a::Cdouble # unbounded cert residual
+    resUnbdd_p::Cdouble # unbounded cert residual
+    relGap::Cdouble # relative duality gap
+    setupTime::Cdouble # time taken for setup phase (milliseconds)
+    solveTime::Cdouble # time taken for solve phase (milliseconds)
+    scale::Cdouble # (final) scale parameter
 end
 
-SCSInfo{T}() where T = SCSInfo{T}(0, ntuple(_ -> zero(Cchar), 32), 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+SCSInfo{T}() where {T} = SCSInfo{T}(
+    0,
+    ntuple(_ -> zero(Cchar), 64),
+    0,
+    0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+)
 
 function raw_status(info::SCSInfo)
     s = collect(info.status)
@@ -192,21 +292,53 @@ end
 struct SCSCone{T<:SCSInt}
     f::T # number of linear equality constraints
     l::T # length of LP cone
+    bu::Ptr{Cdouble} # upper box values, length = bsize
+    bl::Ptr{Cdouble} # lower box values, length = bsize
+    bsize::T # length of box cone constraint, including scale t
     q::Ptr{T} # array of second-order cone constraints
     qsize::T # length of SOC array
     s::Ptr{T} # array of SD constraints
     ssize::T # length of SD array
     ep::T # number of primal exponential cone triples
     ed::T # number of dual exponential cone triples
-    p::Ptr{Cdouble} # array of power cone params, must be \in [-1, 1], negative values are interpreted as specifying the dual cone
-    psize::T # length of power cone array
+    p::Ptr{Cdouble} # array of power cone params, must be ∈ [-1, 1], negative values are interpreted as specifying the dual cone
+    psize::T # number of (primal and dual) power cone triples
 end
 
-# Returns an SCSCone. The q, s, and p arrays are *not* GC tracked in the
-# struct. Use this only when you know that q, s, and p will outlive the struct.
-function SCSCone{T}(f::Integer, l::Integer, q::Vector{T}, s::Vector{T},
-                 ep::Integer, ed::Integer, p::Vector{Cdouble}) where T
-    return SCSCone{T}(f, l, pointer(q), length(q), pointer(s), length(s), ep, ed, pointer(p), length(p))
+"""
+    SCSCone{T}
+SCS struct with cone data.
+
+NOTE: The `bu`, `bl`, `q`, `s`, and `p` are stored as **pointers** in the struct,
+so be careful to ensure that a Julia references to these arrays exists as long as `SCSCone` will be used.
+"""
+function SCSCone{T}(
+    f::Integer,
+    l::Integer,
+    bu::Vector{Cdouble},
+    bl::Vector{Cdouble},
+    q::Vector{T},
+    s::Vector{T},
+    ep::Integer,
+    ed::Integer,
+    p::Vector{Cdouble},
+) where {T}
+    @assert length(bu) == length(bl)
+    return SCSCone{T}(
+        f,
+        l,
+        pointer(bu),
+        pointer(bl),
+        length(bu),
+        pointer(q),
+        length(q),
+        pointer(s),
+        length(s),
+        ep,
+        ed,
+        pointer(p),
+        length(p),
+    )
 end
 
 

@@ -8,6 +8,8 @@ function feasible_basic_conic(T)
 
     f = 0
     l = 100
+    bu = Float64[]
+    bl = Float64[]
     ep = 0
     ed = 0
     q = [12]
@@ -429,9 +431,9 @@ function feasible_basic_conic(T)
 
     A = SparseMatrixCSC(m, n, colptr .+ 1, rowval .+ 1, vec(values))
 
-    sol = SCS_solve(T, m, n, A, b, c, f, l, q, s, ep, ed, Float64[])
+    sol = SCS.SCS_solve(T, m, n, A, b, c, f, l, bu, bl, q, s, ep, ed, Float64[], max_iters=1000)
     @test sol.ret_val == 1
-    @test SCS.raw_status(sol.info) == "Solved"
+    @test SCS.raw_status(sol.info) == "solved"
 end
 
 # Feasible conic problem with exponential cones (no SDP cones)
@@ -441,6 +443,8 @@ function feasible_exponential_conic(T)
     m = 71
     f = 10
     l = 10
+    bu = Float64[]
+    bl = Float64[]
     ep = 10
     ed = 5
     q = [0,1,0,2,3]
@@ -553,9 +557,9 @@ function feasible_exponential_conic(T)
 
     A = SparseMatrixCSC(m, n, colptr .+ 1, rowval .+ 1, vec(values))
 
-    sol = SCS_solve(T, m, n, A, b, c, f, l, q, s, ep, ed, Float64[])
-    @assert sol.ret_val == 1
-    @test SCS.raw_status(sol.info) == "Solved"
+    sol = SCS.SCS_solve(T, m, n, A, b, c, f, l, bu, bl, q, s, ep, ed, Float64[], max_iters=1000)
+    @test sol.ret_val == 1
+    @test SCS.raw_status(sol.info) == "solved"
 end
 
 # Feasible conic problem with exponential and SDP cones
@@ -566,6 +570,8 @@ function feasible_sdp_conic(T)
     m = 46
     f = 3
     l = 3
+    bu = Float64[]
+    bl = Float64[]
     ep = 2
     ed = 2
     q = [2,3,4]
@@ -630,9 +636,9 @@ function feasible_sdp_conic(T)
 
     A = SparseMatrixCSC(m, n, colptr .+ 1, rowval .+ 1, vec(values))
 
-    sol = SCS_solve(T, m, n, A, b, c, f, l, q, s, ep, ed, Float64[])
+    sol = SCS.SCS_solve(T, m, n, A, b, c, f, l, bu, bl, q, s, ep, ed, Float64[], max_iters=1000)
     @test sol.ret_val == 1
-    @test SCS.raw_status(sol.info) == "Solved"
+    @test SCS.raw_status(sol.info) == "solved"
 end
 
 # Feasible conic problem with power cones
@@ -641,6 +647,8 @@ function feasible_pow_conic(T)
     m = 28
     f = 5
     l = 5
+    bu = Float64[]
+    bl = Float64[]
     ep = 0
     ed = 0
     q = Int[]
@@ -681,14 +689,14 @@ function feasible_pow_conic(T)
 
     A = SparseMatrixCSC(m, n, colptr .+ 1, rowval .+ 1, vec(values))
 
-    sol = SCS_solve(T, m, n, A, b, c, f, l, q, s, ep, ed, p)
+    sol = SCS.SCS_solve(T, m, n, A, b, c, f, l, bu, bl, q, s, ep, ed, p, max_iters=1000)
     @test sol.ret_val == 1
-    @test SCS.raw_status(sol.info) == "Solved"
+    @test SCS.raw_status(sol.info) == "solved"
 end
 
 function feasible_basic_problems(solver)
     A = reshape([1.0],(1,1))
-    solution = SCS_solve(solver, 1, 1, A, [1.0], [1.0], 1, 0, Int[], Int[], 0, 0, Float64[]);
+    solution = SCS.SCS_solve(solver, 1, 1, A, [1.0], [1.0], 1, 0, Float64[], Float64[], Int[], Int[], 0, 0, Float64[]);
     @test solution.ret_val == 1
 
     feasible_basic_conic(solver)

@@ -104,8 +104,9 @@ const status_map = Dict{Int, Symbol}(
 function optimize!(m::SCSMathProgModel)
     linear_solver, options = sanitize_SCS_options(m.options)
     t = time()
-    solution = SCS_solve(linear_solver, m.m, m.n, m.A, m.b, m.c, m.f, m.l, m.q,
-                         m.s, m.ep, m.ed, Float64[],
+    solution = SCS_solve(linear_solver, m.m, m.n, m.A, m.b, m.c,
+                         m.f, m.l, Float64[], Float64[],
+                         m.q, m.s, m.ep, m.ed, Float64[],
                          m.primal_sol, m.dual_sol, m.slack; options...)
     m.solve_time = time() - t
 

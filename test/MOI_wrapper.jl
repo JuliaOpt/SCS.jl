@@ -12,7 +12,7 @@ const CACHE = MOIU.UniversalFallback(MOIU.Model{Float64}())
 import SCS
 
 function moi_tests(T)
-    optimizer = SCS.Optimizer(linear_solver=T, eps=1e-6)
+    optimizer = SCS.Optimizer(linear_solver=T, eps_abs=1e-6, eps_rel=1e-7)
     MOI.set(optimizer, MOI.Silent(), true)
 
     @testset "SolverName" begin

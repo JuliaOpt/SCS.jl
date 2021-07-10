@@ -11,7 +11,7 @@ using MathProgBase
 using LinearAlgebra
 using SparseArrays
 
-solver = SCSSolver()
+solver = SCSSolver(eps_abs=1e-5, eps_rel=1e-5)
 objtol = 1e-4
 primaltol = 1e-4
 
